@@ -46,9 +46,10 @@ export function RewindApp() {
         console.log("osu! folder was not set, redirecting to the setup screen.");
         navigate("/setup");
       } else {
-        console.log(`osu! folder = ${theater.analyzer.osuFolderService.getOsuFolder()}`);
-        console.log(`osu!/Songs folder = ${theater.analyzer.osuFolderService.songsFolder$.getValue()}`);
-        console.log(`osu!/Replays folder = ${theater.analyzer.osuFolderService.replaysFolder$.getValue()}`);
+        const { osuFolderService } = theater.analyzer;
+        console.log(`osu! folder = ${osuFolderService.getOsuFolder()} (${osuFolderService.getOsuClient()})`);
+        console.log(`osu!/Songs folder = ${osuFolderService.songsFolder$.getValue()}`);
+        console.log(`osu!/Replays folder = ${osuFolderService.replaysFolder$.getValue()}`);
         navigate("/app/analyzer");
       }
     })();

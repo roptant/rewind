@@ -7,6 +7,7 @@ import {
   GameState,
   HitObjectJudgement,
   isHitObjectJudgement,
+  lazerModSettings,
   ReplayAnalysisEvent,
   retrieveEvents,
 } from "@osujs/core";
@@ -82,11 +83,17 @@ export class GameSimulator {
   calculateHitErrorArray() {}
 
   simulateReplay(beatmap: Beatmap, replay: OsuReplay) {
+    // Replays from osu!lazer are judged with the rules of osu!lazer (unless the Classic mod was used)
+    const lazerMods = replay.lazerMods ? lazerModSettings(replay.lazerMods) : undefined;
     this.gameplayTimeMachine = new BucketedGameStateTimeMachine(replay.frames, beatmap, {
+      // osu!lazer uses the same hit windows as osu!stable nowadays
       hitWindowStyle: "OSU_STABLE",
-      noteLockStyle: "STABLE",
+      noteLockStyle: lazerMods && !lazerMods.classicNoteLock ? "LAZER" : "STABLE",
+      sliderHeadHittableAfterSliderEnd: lazerMods !== undefined,
     });
-    this.gameplayEvaluator = new GameplayInfoEvaluator(beatmap, {});
+    this.gameplayEvaluator = new GameplayInfoEvaluator(beatmap, {
+      sliderHeadAccuracy: lazerMods?.sliderHeadAccuracy ?? false,
+    });
     // TODO: Move this to async ...
     this.lastState = this.gameplayTimeMachine.gameStateAt(1e9);
     this.currentInfo = defaultGameplayInfo;

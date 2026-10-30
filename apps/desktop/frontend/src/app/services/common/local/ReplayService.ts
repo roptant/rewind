@@ -19,6 +19,8 @@ export class ReplayService {
       md5hash: res.replayMD5,
       beatmapMd5: res.beatmapMD5,
       player: res.playerName,
+      // Older osu!lazer replays don't contain the osu!lazer mods
+      lazerMods: res.isLazerReplay ? res.lazerScoreInfo?.mods ?? [] : undefined,
     };
   }
 }

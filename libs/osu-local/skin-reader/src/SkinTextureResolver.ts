@@ -206,3 +206,38 @@ export class OsuLegacySkinTextureResolver implements OsuSkinTextureResolver {
     return [];
   }
 }
+
+export type MappedSkinFile = {
+  // The name of the file in the skin (e.g. "hitcircle@2x.png")
+  fileName: string;
+  // Where the file is actually stored
+  path: string;
+};
+
+// The file names are compared case-insensitively and with forward slashes, just like on Windows / osu!lazer
+export function normalizeSkinFileName(fileName: string): string {
+  return join(fileName.replace(/\\/g, "/")).toLowerCase();
+}
+
+/**
+ * Resolves the textures of a skin whose files are not stored with their original names inside a folder. For example,
+ * osu!lazer stores all the files by their SHA-256 hashes.
+ *
+ * The resolved paths are still the file names inside the skin, use `getFilePath` to get the actual location.
+ */
+export class OsuMappedSkinTextureResolver extends OsuLegacySkinTextureResolver {
+  private readonly filePaths: Map<string, string>;
+
+  constructor(files: MappedSkinFile[], config: SkinConfig) {
+    super("", config);
+    this.filePaths = new Map(files.map((f) => [normalizeSkinFileName(f.fileName), f.path]));
+  }
+
+  getFilePath(fileName: string): string | undefined {
+    return this.filePaths.get(normalizeSkinFileName(fileName));
+  }
+
+  async checkForFileExistenceInFolder(fileName: string) {
+    return this.getFilePath(fileName) !== undefined;
+  }
+}

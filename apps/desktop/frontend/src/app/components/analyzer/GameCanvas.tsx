@@ -1,6 +1,6 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useAnalysisApp } from "../../providers/TheaterProvider";
-import { Box, CircularProgress, IconButton, Stack, Tooltip, Typography } from "@mui/material";
+import { Alert, Box, Button, CircularProgress, IconButton, Stack, Tooltip, Typography } from "@mui/material";
 import { useObservable } from "rxjs-hooks";
 import { LightningBoltIcon } from "@heroicons/react/solid";
 import InfoIcon from "@mui/icons-material/Info";
@@ -8,6 +8,8 @@ import { ignoreFocus } from "../../utils/focus";
 import CloseIcon from "@mui/icons-material/Close";
 
 function EmptyState() {
+  const analysisApp = useAnalysisApp();
+  const isLazer = analysisApp.osuFolderService.getOsuClient() === "lazer";
   return (
     <Stack gap={2} alignItems={"center"}>
       <Stack gap={1} alignItems={"center"}>
@@ -17,7 +19,9 @@ function EmptyState() {
       <Stack gap={1} alignItems={"center"} direction={"row"}>
         <Box component={LightningBoltIcon} sx={{ height: "1em", color: "text.secondary" }} />
         <Typography color={"text.secondary"}>
-          In osu! press F2 while being at a score/fail screen to load the replay
+          {isLazer
+            ? "In osu!lazer export the replay at the results screen to load it"
+            : "In osu! press F2 while being at a score/fail screen to load the replay"}
         </Typography>
       </Stack>
       <Stack gap={1} alignItems={"center"} direction={"row"}>
@@ -34,7 +38,9 @@ export const GameCanvas = () => {
   const canvas = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const analysisApp = useAnalysisApp();
-  const { status } = useObservable(() => analysisApp.scenarioManager.scenario$, { status: "DONE" });
+  const { status, error, warning } = useObservable(() => analysisApp.scenarioManager.scenario$, { status: "DONE" });
+  const [warningDismissed, setWarningDismissed] = useState(false);
+  useEffect(() => setWarningDismissed(false), [warning]);
 
   const showOverlay = status !== "DONE";
 
@@ -72,6 +78,15 @@ export const GameCanvas = () => {
           </IconButton>
         </Tooltip>
       )}
+      {status === "DONE" && warning && !warningDismissed && (
+        <Alert
+          severity={"warning"}
+          onClose={() => setWarningDismissed(true)}
+          sx={{ position: "absolute", left: "50%", bottom: 8, transform: "translateX(-50%)" }}
+        >
+          {warning}
+        </Alert>
+      )}
       <canvas
         style={{
           width: "100%",
@@ -98,7 +113,15 @@ export const GameCanvas = () => {
         >
           {status === "INIT" && <EmptyState />}
           {status === "LOADING" && <CircularProgress />}
-          {status === "ERROR" && <Typography>Something wrong happened...</Typography>}
+          {status === "ERROR" && (
+            <Stack gap={1} alignItems={"center"}>
+              <Typography>Something wrong happened...</Typography>
+              {error && <Typography color={"text.secondary"}>{error}</Typography>}
+              <Button onClick={() => analysisApp.scenarioManager.clearReplay()} onFocus={ignoreFocus}>
+                Close
+              </Button>
+            </Stack>
+          )}
         </Box>
       )}
     </Box>

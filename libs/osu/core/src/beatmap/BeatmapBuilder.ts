@@ -16,6 +16,7 @@ import { Spinner } from "../hitobjects/Spinner";
 import { approachRateToApproachDuration, circleSizeToScale, Position } from "@osujs/math";
 import { OsuHitObject } from "../hitobjects/Types";
 import { HardRockMod } from "../mods/HardRockMod";
+import { MirrorMod, MirrorReflection } from "../mods/MirrorMod";
 import { PathControlPoint } from "../hitobjects/slider/PathControlPoint";
 
 function copyPosition({ x, y }: Position): Position {
@@ -183,6 +184,13 @@ function findDifficultyApplier(mods: OsuClassicMod[]): BeatmapDifficultyAdjuster
 interface BeatmapBuilderOptions {
   addStacking: boolean;
   mods: OsuClassicMod[];
+  // The following options are only possible with osu!lazer mods
+  // The speed of the rate adjusting mods (e.g. 1.2 for DT), otherwise it is determined by the mods
+  clockRate?: number;
+  // Mirror mod
+  mirror?: MirrorReflection;
+  // Difficulty Adjust mod, overrides the beatmap's difficulty settings
+  difficultyOverrides?: Partial<BeatmapDifficulty>;
 }
 
 const defaultBeatmapBuilderOptions: BeatmapBuilderOptions = {
@@ -202,9 +210,11 @@ const defaultBeatmapBuilderOptions: BeatmapBuilderOptions = {
  */
 export function buildBeatmap(bluePrint: Blueprint, options?: Partial<BeatmapBuilderOptions>): Beatmap {
   const { beatmapVersion, stackLeniency } = bluePrint.blueprintInfo;
-  const { mods, addStacking } = { ...defaultBeatmapBuilderOptions, ...options };
+  const { mods, addStacking, clockRate, mirror, difficultyOverrides } = { ...defaultBeatmapBuilderOptions, ...options };
 
-  const finalDifficulty = findDifficultyApplier(mods)(bluePrint.defaultDifficulty);
+  // Difficulty Adjust is not compatible with Easy or Hard Rock in osu!lazer
+  const baseDifficulty = { ...bluePrint.defaultDifficulty, ...difficultyOverrides };
+  const finalDifficulty = findDifficultyApplier(mods)(baseDifficulty);
 
   const hitObjects: OsuHitObject[] = bluePrint.hitObjectSettings.map((setting, index) =>
     createStaticHitObject(index, setting, bluePrint.controlPointInfo, finalDifficulty),
@@ -215,10 +225,13 @@ export function buildBeatmap(bluePrint: Blueprint, options?: Partial<BeatmapBuil
   if (mods.includes("HARD_ROCK")) {
     HardRockMod.flipVertically(hitObjects);
   }
+  if (mirror) {
+    MirrorMod.reflect(hitObjects, mirror);
+  }
 
   if (addStacking) {
     modifyStackingPosition(hitObjects, stackLeniency, beatmapVersion);
   }
 
-  return new Beatmap(hitObjects, finalDifficulty, mods, bluePrint.controlPointInfo);
+  return new Beatmap(hitObjects, finalDifficulty, mods, bluePrint.controlPointInfo, clockRate);
 }

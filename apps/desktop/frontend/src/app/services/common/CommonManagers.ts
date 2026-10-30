@@ -13,6 +13,7 @@ import { HitErrorBarSettingsStore } from "./hit-error-bar";
 import { PlaybarSettingsStore } from "./playbar";
 import { OsuFolderService } from "./local/OsuFolderService";
 import { OsuDBDao } from "./local/OsuDBDao";
+import { LazerDBDao } from "./local/LazerDBDao";
 import { BlueprintLocatorService } from "./local/BlueprintLocatorService";
 import { BeatmapRenderService } from "./beatmap-render";
 import { STAGE_TYPES } from "../types";
@@ -58,6 +59,7 @@ export function createRewindTheater({ rewindSkinsFolder, appPlatform, appVersion
   container.bind(STAGE_TYPES.APP_VERSION).toConstantValue(appVersion);
   container.bind(OsuFolderService).toSelf();
   container.bind(OsuDBDao).toSelf();
+  container.bind(LazerDBDao).toSelf();
   container.bind(BlueprintLocatorService).toSelf();
   container.bind(ReplayService).toSelf();
   container.bind(SkinLoader).toSelf();

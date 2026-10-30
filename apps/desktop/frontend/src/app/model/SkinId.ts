@@ -1,4 +1,4 @@
-export type SkinSource = "rewind" | "osu";
+export type SkinSource = "rewind" | "osu" | "lazer";
 
 export interface SkinId {
   source: SkinSource;
@@ -9,10 +9,13 @@ export function skinIdToString({ source, name }: SkinId) {
   return `${source}:${name}`;
 }
 
-const isSkinSource = (s: string): s is SkinSource => s === "rewind" || s === "osu";
+const isSkinSource = (s: string): s is SkinSource => s === "rewind" || s === "osu" || s === "lazer";
 
 export function stringToSkinId(str: string): SkinId {
-  const [source, name] = str.split(":");
+  // Skin names of osu!lazer could also contain ":"
+  const separatorIndex = str.indexOf(":");
+  const source = str.substring(0, separatorIndex);
+  const name = str.substring(separatorIndex + 1);
   if (isSkinSource(source)) {
     return { source, name };
   } else {

@@ -7,6 +7,8 @@ import { injectable } from "inversify";
 import { OsuFolderService } from "./OsuFolderService";
 import { BlueprintInfo } from "../../../model/BlueprintInfo";
 import { OsuDBDao } from "./OsuDBDao";
+import { LazerDBDao } from "./LazerDBDao";
+import { findLazerFile, lazerFilePath } from "@rewind/osu-local/db-reader";
 
 const { stat, readFile } = fsPromises;
 
@@ -38,16 +40,21 @@ type BlueprintMD5 = string;
 /**
  * Service responsible for locating the blueprints.
  *
- * It mainly uses the `osu!.db` to get the majority of the blueprints. However, once the user imports new beatmaps,
- * the `osu!.db` doesn't get immediately updated (no flushing), thus we have to find out which ones were added by
- * manually looking for new files.
+ * For osu!stable it mainly uses the `osu!.db` to get the majority of the blueprints. However, once the user imports new
+ * beatmaps, the `osu!.db` doesn't get immediately updated (no flushing), thus we have to find out which ones were added
+ * by manually looking for new files.
+ *
+ * For osu!lazer all the blueprints are read from its database (`client.realm`), which is updated right away.
  */
 @injectable()
 export class BlueprintLocatorService {
   private blueprints: Record<BlueprintMD5, BlueprintInfo> = {};
 
-  constructor(private readonly osuDbDao: OsuDBDao, private readonly osuFolderService: OsuFolderService) {
-  }
+  constructor(
+    private readonly osuDbDao: OsuDBDao,
+    private readonly lazerDbDao: LazerDBDao,
+    private readonly osuFolderService: OsuFolderService,
+  ) {}
 
   private get songsFolder() {
     return this.osuFolderService.songsFolder$.getValue();
@@ -99,6 +106,10 @@ export class BlueprintLocatorService {
   }
 
   async getAllBlueprints(): Promise<Record<string, BlueprintInfo>> {
+    if (this.osuFolderService.getOsuClient() === "lazer") {
+      // Cached in the DAO and only read again if osu!lazer has written to its database
+      return this.lazerDbDao.getAllBlueprints();
+    }
     const needToCheckAgain = await this.blueprintHasBeenAdded();
     if (needToCheckAgain) {
       await this.completeRead();
@@ -111,11 +122,26 @@ export class BlueprintLocatorService {
     return maps[md5];
   }
 
+  /**
+   * Returns the absolute path to a file of the beatmap set that the blueprint belongs to.
+   * @param blueprint the blueprint
+   * @param fileName the file name as it is referenced in the .osu file (e.g. "audio.mp3")
+   * @returns `undefined` if the file is not part of the beatmap set (only known for osu!lazer)
+   */
+  resolveFilePath(blueprint: BlueprintInfo, fileName: string): string | undefined {
+    if (blueprint.lazerFiles) {
+      const file = findLazerFile(blueprint.lazerFiles, fileName);
+      return file && join(this.osuFolderService.getOsuFolder(), lazerFilePath(file.hash));
+    }
+    return join(this.songsFolder, blueprint.folderName, fileName);
+  }
+
   public async blueprintBg(md5: string): Promise<string | undefined> {
     const blueprintMetaData = await this.getBlueprintByMD5(md5);
     if (!blueprintMetaData) return undefined;
-    const { osuFileName, folderName } = blueprintMetaData;
-    const data = await readFile(join(this.songsFolder, folderName, osuFileName), { encoding: "utf-8" });
+    const osuFilePath = this.resolveFilePath(blueprintMetaData, blueprintMetaData.osuFileName);
+    if (!osuFilePath) return undefined;
+    const data = await readFile(osuFilePath, { encoding: "utf-8" });
     const parsedBlueprint = parseBlueprint(data, { sectionsToRead: ["Events"] });
     // There is also an offset but let's ignore for now
     return parsedBlueprint.blueprintInfo.metadata.backgroundFile;

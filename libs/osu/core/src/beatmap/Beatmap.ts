@@ -23,9 +23,10 @@ export class Beatmap {
     public readonly difficulty: BeatmapDifficulty,
     public readonly appliedMods: OsuClassicMod[],
     public readonly controlPointInfo: ControlPointInfo,
+    gameClockRate?: number,
   ) {
     this.hitObjectDict = normalizeHitObjects(hitObjects);
-    this.gameClockRate = determineDefaultPlaybackSpeed(appliedMods);
+    this.gameClockRate = gameClockRate ?? determineDefaultPlaybackSpeed(appliedMods);
   }
 
   getHitObject(id: string): AllHitObjects {
@@ -55,17 +56,18 @@ export class Beatmap {
 const endTime = (o: OsuHitObject) => (isHitCircle(o) ? o.hitTime : o.endTime);
 
 export function mostCommonBeatLength({
-                                       hitObjects,
-                                       timingPoints,
-                                     }: { hitObjects: OsuHitObject[], timingPoints: TimingControlPoint[] }) {
+  hitObjects,
+  timingPoints,
+}: {
+  hitObjects: OsuHitObject[];
+  timingPoints: TimingControlPoint[];
+}) {
   // The last playable time in the beatmap - the last timing point extends to this time.
   // Note: This is more accurate and may present different results because osu-stable didn't have the ability to
   // calculate slider durations in this context.
   let lastTime = 0;
-  if (hitObjects.length > 0)
-    lastTime = endTime(hitObjects[hitObjects.length - 1]);
-  else if (timingPoints.length > 0)
-    lastTime = timingPoints[timingPoints.length - 1].time;
+  if (hitObjects.length > 0) lastTime = endTime(hitObjects[hitObjects.length - 1]);
+  else if (timingPoints.length > 0) lastTime = timingPoints[timingPoints.length - 1].time;
 
   // 1. Group the beat lengths and aggregate the durations
   const durations: Map<number, number> = new Map<number, number>();
@@ -73,10 +75,8 @@ export function mostCommonBeatLength({
   function add(d: number, x: number) {
     d = Math.round(d * 1000) / 1000;
     const a = durations.get(d);
-    if (a === undefined)
-      durations.set(d, x);
-    else
-      durations.set(d, a + x);
+    if (a === undefined) durations.set(d, x);
+    else durations.set(d, a + x);
   }
 
   for (let i = 0; i < timingPoints.length; i++) {
@@ -94,7 +94,7 @@ export function mostCommonBeatLength({
 
   // 2. Sort by duration descendingly
 
-  const list: Array<{ beatLength: number, duration: number }> = [];
+  const list: Array<{ beatLength: number; duration: number }> = [];
   for (const beatLength of durations.keys()) {
     list.push({ beatLength: beatLength, duration: durations.get(beatLength) as number });
   }
@@ -107,4 +107,3 @@ export function mostCommonBeatLength({
     return list[0].beatLength;
   }
 }
-

@@ -28,6 +28,7 @@ import { frontendAPI } from "../../api";
 
 const sourceName: Record<SkinSource, string> = {
   osu: "osu!/Skins Folder",
+  lazer: "osu!lazer",
   rewind: "Rewind",
 };
 
@@ -246,10 +247,7 @@ function SkinsSettings() {
   const chosenSkinId = stringToSkinId(preferredSkinId);
   const skins = useObservable(() => theater.skinManager.skinList$, []);
 
-  const skinOptions: SkinId[] = useMemo(
-    () => [DEFAULT_OSU_SKIN_ID, DEFAULT_REWIND_SKIN_ID].concat(skins.map((name) => ({ source: "osu", name }))),
-    [skins],
-  );
+  const skinOptions: SkinId[] = useMemo(() => [DEFAULT_OSU_SKIN_ID, DEFAULT_REWIND_SKIN_ID].concat(skins), [skins]);
 
   useEffect(() => {
     theater.skinManager.loadSkinList();

@@ -1,7 +1,12 @@
 import { posix } from "path";
 import { promises as fs } from "fs";
 import { generateDefaultSkinConfig, parseSkinIni } from "@rewind/osu/skin";
-import { OsuLegacySkinTextureResolver } from "./SkinTextureResolver";
+import {
+  MappedSkinFile,
+  normalizeSkinFileName,
+  OsuLegacySkinTextureResolver,
+  OsuMappedSkinTextureResolver,
+} from "./SkinTextureResolver";
 
 const join = posix.join;
 
@@ -67,5 +72,23 @@ export class SkinFolderReader {
       config = generateDefaultSkinConfig(false);
     }
     return new OsuLegacySkinTextureResolver(skinFolderPath, config);
+  }
+
+  /**
+   * Same as `getSkinResolver`, but for skins whose files are not stored with their original names (e.g. osu!lazer).
+   * @param files the files of the skin
+   */
+  static async getMappedSkinResolver(files: MappedSkinFile[]): Promise<OsuMappedSkinTextureResolver> {
+    const configFile = files.find((f) => normalizeSkinFileName(f.fileName) === SKIN_CONFIG_FILENAME);
+    let config = generateDefaultSkinConfig(false);
+    if (configFile) {
+      try {
+        const data = await fs.readFile(configFile.path, { encoding: "utf-8" });
+        config = parseSkinIni(data);
+      } catch (err) {
+        console.warn(`Could not read ${SKIN_CONFIG_FILENAME} at ${configFile.path}, using the default config`);
+      }
+    }
+    return new OsuMappedSkinTextureResolver(files, config);
   }
 }

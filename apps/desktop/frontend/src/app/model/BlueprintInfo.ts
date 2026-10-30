@@ -1,3 +1,5 @@
+import { LazerNamedFile } from "@rewind/osu-local/db-reader";
+
 export interface BlueprintInfo {
   md5Hash: string;
   lastPlayed: Date;
@@ -11,4 +13,7 @@ export interface BlueprintInfo {
 
   // [Events]
   bgFileName?: string; // Usually unknown unless .osu file is parsed
+
+  // osu!lazer doesn't store the beatmaps in folders, instead all files of the beatmap set are stored by their hashes
+  lazerFiles?: LazerNamedFile[];
 }

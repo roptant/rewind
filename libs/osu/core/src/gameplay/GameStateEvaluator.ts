@@ -84,12 +84,22 @@ export type HitWindowStyle = "OSU_STABLE" | "OSU_LAZER";
 export type GameStateEvaluatorOptions = {
   hitWindowStyle: HitWindowStyle;
   noteLockStyle: NoteLockStyle;
+  // In osu!stable the slider head is missed if the slider ends before it was hit, while in osu!lazer the head can
+  // still be hit within its hit window.
+  sliderHeadHittableAfterSliderEnd?: boolean;
 };
 
 const defaultOptions: GameStateEvaluatorOptions = {
   noteLockStyle: "STABLE",
   hitWindowStyle: "OSU_STABLE",
+  sliderHeadHittableAfterSliderEnd: false,
 };
+
+// Both osu!stable and osu!lazer make the hit circles slightly bigger for historical reasons. From osu!stable:
+// "Builds of osu! up to 2013-05-04 had the gamefield being rounded down, which caused incorrect radius calculations
+// in widescreen cases. This ratio adjusts to allow for old replays to work post-fix, which in turn increases the lenience
+// for all plays, but by an amount so small it should only be effective in replays."
+const BROKEN_GAMEFIELD_ROUNDING_ALLOWANCE = 1.00041;
 
 const HitObjectVerdicts = {
   GREAT: 0,
@@ -147,7 +157,7 @@ export class GameStateEvaluator {
 
     const headVerdict = this.gameState.hitCircleVerdict[slider.head.id];
     // Clean up the head if it hasn't been interacted with the player in any way.
-    if (headVerdict === undefined) {
+    if (headVerdict === undefined && !this.options.sliderHeadHittableAfterSliderEnd) {
       this.judgeHitCircle(slider.head.id, {
         judgementTime: slider.endTime,
         type: "MISS",
@@ -240,6 +250,8 @@ export class GameStateEvaluator {
     const { noteLockStyle } = this.options;
     const currentTime = this.gameState.currentTime;
     let noteLocked = false;
+    // osu!lazer: the hit time of the latest earlier circle that has not been reached yet
+    let lazerBlockingHitTime: number | undefined;
 
     // JavaScript `Set` maintains its elements in insertion order so the early ones
     // we iterate on are also the ones that are supposed to be hit first ...
@@ -252,7 +264,7 @@ export class GameStateEvaluator {
       const cursorInside = Vec2.withinDistance(
         hitCircle.position,
         this.gameState.cursorPosition,
-        Math.fround(hitCircle.radius),
+        Math.fround(hitCircle.radius * BROKEN_GAMEFIELD_ROUNDING_ALLOWANCE),
       );
 
       if (!cursorInside) {
@@ -260,11 +272,16 @@ export class GameStateEvaluator {
         if (noteLockStyle === "STABLE") {
           noteLocked = true;
         }
-        // It's a bit fairer because this allows us to force miss notes that are in the past.
-        if (noteLockStyle === "LAZER" && currentTime <= hitCircle.hitTime) {
-          noteLocked = true;
+        // osu!lazer only blocks hits until the hit time of the earlier circle has been reached, after that the later
+        // circles can be hit and the earlier ones will be force missed (see `StartTimeOrderedHitPolicy`).
+        if (noteLockStyle === "LAZER" && currentTime < hitCircle.hitTime) {
+          lazerBlockingHitTime = hitCircle.hitTime;
         }
         continue;
+      }
+
+      if (lazerBlockingHitTime !== undefined && lazerBlockingHitTime < hitCircle.hitTime) {
+        noteLocked = true;
       }
 
       // If we got note locked, we want to set an animation then ignore the other hit circles
@@ -277,17 +294,12 @@ export class GameStateEvaluator {
       const delta = currentTime - hitCircle.hitTime;
       if (hasRelax && delta < -RELAX_LENIENCY) break;
 
-      let judged = false;
-      for (const verdict of ["GREAT", "OK", "MEH"] as const) {
-        if (isWithinHitWindow(this.hitWindows, delta, verdict)) {
-          this.judgeHitCircle(hitCircle.id, { judgementTime: currentTime, type: verdict });
-          judged = true;
-          break;
-        }
+      const verdict = (["GREAT", "OK", "MEH"] as const).find((v) => isWithinHitWindow(this.hitWindows, delta, v));
+      if (verdict !== undefined) {
+        this.forceMissEarlierHitCircles(hitCircleIds.slice(0, i), hitCircle.hitTime);
+        this.judgeHitCircle(hitCircle.id, { judgementTime: currentTime, type: verdict });
+        break;
       }
-
-      // TODO: Force miss other notes less than i for lazer style
-      if (judged) break;
 
       if (isWithinHitWindow(this.hitWindows, delta, "MISS")) {
         // TODO: Add a "HIT_TOO_LATE" (even though it's kinda unfair, but this is osu!stable behavior)
@@ -295,12 +307,25 @@ export class GameStateEvaluator {
         // t+110ms and can be "clicked" by the user at time t+110ms, but it will just result in a miss. The problem is
         // that the underlying note will then be ignored because the click is "wasted" for the already expired hit
         // circle. => This might be a stable bug or feature?
+        this.forceMissEarlierHitCircles(hitCircleIds.slice(0, i), hitCircle.hitTime);
         this.judgeHitCircle(hitCircle.id, { judgementTime: currentTime, type: "MISS", missReason: "HIT_TOO_EARLY" });
-        judged = true;
+        break;
       }
 
-      // TODO: Do we force miss other notes as well? for lazer style
-      if (judged) break;
+      // In osu!lazer the click is used up by the first circle under the cursor, even if it's too early to be hit.
+      if (noteLockStyle === "LAZER") break;
+    }
+  }
+
+  // In osu!lazer hitting a circle will force miss the earlier circles that have not been hit yet. These misses are
+  // judged before the hit itself.
+  private forceMissEarlierHitCircles(hitCircleIds: string[], hitTime: number) {
+    if (this.options.noteLockStyle !== "LAZER") return;
+    const judgementTime = this.gameState.currentTime;
+    for (const id of hitCircleIds) {
+      if (this.gameState.aliveHitCircleIds.has(id) && this.beatmap.getHitCircle(id).hitTime < hitTime) {
+        this.judgeHitCircle(id, { judgementTime, type: "MISS", missReason: "FORCE_MISS_NOTELOCK" });
+      }
     }
   }
 

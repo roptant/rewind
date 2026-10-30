@@ -55,14 +55,14 @@ export class SkinHolder {
 
 @injectable()
 export class SkinManager {
-  skinList$: BehaviorSubject<string[]>;
+  skinList$: BehaviorSubject<SkinId[]>;
 
   constructor(
     private readonly skinLoader: SkinLoader,
     private readonly skinSettingsStore: SkinSettingsStore,
     private readonly skinHolder: SkinHolder,
   ) {
-    this.skinList$ = new BehaviorSubject<string[]>([]);
+    this.skinList$ = new BehaviorSubject<SkinId[]>([]);
   }
 
   async loadSkin(skinId: SkinId) {

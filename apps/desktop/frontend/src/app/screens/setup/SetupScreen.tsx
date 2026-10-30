@@ -67,9 +67,9 @@ export function SetupScreen() {
     if (!directoryPath) {
       return;
     }
-    const isValid = await analyzer.osuFolderService.isValidOsuFolder(directoryPath);
-    if (isValid) {
-      analyzer.osuFolderService.setOsuFolder(directoryPath);
+    const osuFolder = await analyzer.osuFolderService.detectOsuFolder(directoryPath);
+    if (osuFolder) {
+      analyzer.osuFolderService.setOsuFolder(osuFolder);
       navigate("/app/analyzer");
     } else {
       setShowErrorMessage(true);
@@ -105,14 +105,14 @@ export function SetupScreen() {
           {showErrorMessage && (
             <>
               <Alert severity="error" variant="filled">
-                <div>Does not look a valid osu! directory!</div>
+                <div>Does not look like a valid osu! or osu!lazer directory!</div>
               </Alert>
             </>
           )}
           <DirectorySelection
             value={directoryPath}
             onChange={handleOnDirectoryChange}
-            placeHolder={"Select your osu! directory"}
+            placeHolder={"Select your osu! or osu!lazer directory"}
             badgeOnEmpty={true}
           />
           <Stack direction={"row-reverse"} gap={2}>

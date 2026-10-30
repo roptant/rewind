@@ -1,6 +1,7 @@
 import { injectable } from "inversify";
 import { BehaviorSubject } from "rxjs";
-import { Beatmap, buildBeatmap, modsToBitmask, parseBlueprint } from "@osujs/core";
+import { Beatmap, buildBeatmap, lazerModSettings, modsToBitmask, parseBlueprint } from "@osujs/core";
+import { Texture } from "pixi.js";
 import { GameSimulator } from "../common/game/GameSimulator";
 import { AudioService } from "../common/audio/AudioService";
 import { ReplayService } from "../common/local/ReplayService";
@@ -11,17 +12,19 @@ import { AudioEngine } from "../common/audio/AudioEngine";
 import { GameplayClock } from "../common/game/GameplayClock";
 import { GameLoop } from "../common/game/GameLoop";
 import { PixiRendererManager } from "../renderers/PixiRendererManager";
-import { join } from "path";
 import { readFile } from "fs/promises";
 import { BlueprintLocatorService } from "../common/local/BlueprintLocatorService";
-import { OsuFolderService } from "../common/local/OsuFolderService";
 import { BeatmapBackgroundSettingsStore } from "../common/beatmap-background";
 import { TextureManager } from "../textures/TextureManager";
 import { ReplayFileWatcher } from "../common/local/ReplayFileWatcher";
 import { ModSettingsService } from "../analysis/mod-settings";
 
-interface Scenario {
+export interface Scenario {
   status: "LOADING" | "ERROR" | "DONE" | "INIT";
+  // Only set if the status is "ERROR"
+  error?: string;
+  // Something the user should be aware of, even though the replay could be loaded
+  warning?: string;
 }
 
 function localFile(path: string) {
@@ -39,7 +42,6 @@ export class ScenarioManager {
     private readonly gameSimulator: GameSimulator,
     private readonly modSettingsService: ModSettingsService,
     private readonly blueprintLocatorService: BlueprintLocatorService,
-    private readonly osuFolderService: OsuFolderService,
     private readonly audioService: AudioService,
     private readonly textureManager: TextureManager,
     private readonly replayService: ReplayService,
@@ -73,6 +75,15 @@ export class ScenarioManager {
   }
 
   async loadReplay(replayId: string) {
+    try {
+      await this.loadReplayOrThrow(replayId);
+    } catch (err) {
+      console.error(`Could not load the replay with id = ${replayId}`, err);
+      this.scenario$.next({ status: "ERROR", error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private async loadReplayOrThrow(replayId: string) {
     console.log(`ScenarioManager loading replay with id = ${replayId}`);
     // TODO: Clean this up
     this.audioEngine.destroy();
@@ -81,24 +92,30 @@ export class ScenarioManager {
 
     const replay = await this.replayService.retrieveReplay(replayId);
     const blueprintInfo = await this.blueprintLocatorService.getBlueprintByMD5(replay.beatmapMd5);
-    if (!blueprintInfo) throw Error(`Could not find the blueprint with MD5=${replay.beatmapMd5}`);
+    if (!blueprintInfo) {
+      throw Error(`Could not find the beatmap of the replay (MD5=${replay.beatmapMd5}). Is it imported in osu!?`);
+    }
 
-    const absoluteFolderPath = join(this.osuFolderService.songsFolder$.getValue(), blueprintInfo.folderName);
+    const resolveFile = (fileName: string) => this.blueprintLocatorService.resolveFilePath(blueprintInfo, fileName);
 
-    const rawBlueprint = await readFile(join(absoluteFolderPath, blueprintInfo.osuFileName), "utf-8");
+    const osuFilePath = resolveFile(blueprintInfo.osuFileName);
+    if (!osuFilePath) throw Error(`Could not find the .osu file of the blueprint with MD5=${replay.beatmapMd5}`);
+
+    const rawBlueprint = await readFile(osuFilePath, "utf-8");
     const blueprint = parseBlueprint(rawBlueprint);
 
     const { metadata } = blueprint.blueprintInfo;
 
     // Load background
+    const backgroundFilePath = resolveFile(metadata.backgroundFile);
     this.beatmapBackgroundSettingsStore.texture$.next(
-      await this.textureManager.loadTexture(localFile(join(absoluteFolderPath, metadata.backgroundFile))),
+      backgroundFilePath ? await this.textureManager.loadTexture(localFile(backgroundFilePath)) : Texture.EMPTY,
     );
 
     // Load audio
-    this.audioEngine.setSong(
-      await this.audioService.loadAudio(localFile(join(absoluteFolderPath, metadata.audioFile))),
-    );
+    const audioFilePath = resolveFile(metadata.audioFile);
+    if (!audioFilePath) throw Error(`Could not find the audio file '${metadata.audioFile}' of the blueprint`);
+    this.audioEngine.setSong(await this.audioService.loadAudio(localFile(audioFilePath)));
     this.audioEngine.song?.mediaElement.addEventListener("loadedmetadata", () => {
       const duration = (this.audioEngine.song?.mediaElement.duration ?? 0) * 1000;
       this.gameClock.setDuration(duration);
@@ -107,7 +124,14 @@ export class ScenarioManager {
 
     // If the building is too slow or unbearable, we should push the building to a WebWorker, but right now it's ok
     // even on long maps.
-    const beatmap = buildBeatmap(blueprint, { addStacking: true, mods: replay.mods });
+    const lazerMods = replay.lazerMods ? lazerModSettings(replay.lazerMods) : undefined;
+    const beatmap = buildBeatmap(blueprint, {
+      addStacking: true,
+      mods: replay.mods,
+      clockRate: lazerMods?.clockRate,
+      mirror: lazerMods?.mirror,
+      difficultyOverrides: lazerMods?.difficultyOverrides,
+    });
 
     console.log(`Beatmap built with ${beatmap.hitObjects.length} hitobjects`);
     console.log(`Replay loaded with ${replay.frames.length} frames`);
@@ -128,7 +152,14 @@ export class ScenarioManager {
     await this.sceneManager.changeToScene(AnalysisSceneKeys.ANALYSIS);
 
     this.gameLoop.startTicker();
-    this.scenario$.next({ status: "DONE" });
+    const unsupportedMods = lazerMods?.unsupportedMods ?? [];
+    this.scenario$.next({
+      status: "DONE",
+      warning:
+        unsupportedMods.length > 0
+          ? `The osu!lazer mods ${unsupportedMods.join(", ")} are not supported, the analysis might not match the play.`
+          : undefined,
+    });
   }
 
   // This is just the NM view of a beatmap

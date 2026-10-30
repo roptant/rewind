@@ -1,5 +1,7 @@
 import { app, dialog, ipcMain } from "electron";
 import { read } from "node-osr";
+import { readFile } from "fs/promises";
+import { isLazerReplayVersion, readLazerScoreInfo } from "@rewind/osu-local/osr-reader";
 
 async function userSelectDirectory(defaultPath: string) {
   const { canceled, filePaths } = await dialog.showOpenDialog({ defaultPath, properties: ["openDirectory"] });
@@ -45,6 +47,13 @@ export function setupEventListeners() {
   });
 
   ipcMain.handle("readOsr", async (event, filePath) => {
-    return await read(filePath);
+    const buffer = await readFile(filePath);
+    const replay = await read(buffer);
+    // osu!lazer replays contain the osu!lazer mods (with their settings) at the end
+    return {
+      ...replay,
+      isLazerReplay: isLazerReplayVersion(replay.gameVersion),
+      lazerScoreInfo: readLazerScoreInfo(buffer),
+    };
   });
 }

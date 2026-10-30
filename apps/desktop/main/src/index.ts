@@ -67,9 +67,9 @@ function createFrontendWindow() {
     return { action: "deny" };
   });
 
-  ipcMain.on("osuFolderChanged", (event, folder: string) => {
+  ipcMain.on("osuFolderChanged", (event, folder: string, replaysFolder?: string) => {
     // TODO: frontend.setMenu()
-    Menu.setApplicationMenu(createMenu(folder));
+    Menu.setApplicationMenu(createMenu(folder, replaysFolder));
   });
 
   // In DEV mode we want to utilize hot reloading, therefore we are going to connect to the development server.
@@ -149,7 +149,8 @@ function handleActivate() {
   app.on("activate", handleActivate);
 })();
 
-function createMenu(osuFolder: string | null) {
+// `replaysFolder` is "Replays" for osu!stable and "exports" for osu!lazer
+function createMenu(osuFolder: string | null, replaysFolder?: string) {
   const osuFolderKnown = !!osuFolder as boolean;
   const isMac = process.platform === "darwin";
 
@@ -205,7 +206,7 @@ function createMenu(osuFolder: string | null) {
           enabled: osuFolderKnown,
           click: async () => {
             const { canceled, filePaths } = await dialog.showOpenDialog({
-              defaultPath: join(osuFolder ?? "", "Replays"),
+              defaultPath: replaysFolder ?? join(osuFolder ?? "", "Replays"),
               properties: ["openFile"],
               filters: [
                 { name: "osu! Replay", extensions: ["osr"] },
