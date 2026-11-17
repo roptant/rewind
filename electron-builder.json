@@ -54,7 +54,13 @@
   "npmRebuild": false,
   "asarUnpack": [
     "**/node_modules/realm/**/*",
-    "**/node_modules/@realm/**/*"
+    "**/node_modules/@realm/**/*",
+    "**/node_modules/bson/**/*",
+    "**/node_modules/buffer/**/*",
+    "**/node_modules/base64-js/**/*",
+    "**/node_modules/ieee754/**/*",
+    "**/node_modules/debug/**/*",
+    "**/node_modules/ms/**/*"
   ],
   "extraResources": [
     {

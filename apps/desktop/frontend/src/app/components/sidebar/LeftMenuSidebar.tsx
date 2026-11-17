@@ -21,7 +21,7 @@ const tooltipPosition = {
   },
 };
 
-const repoOwner = "abstrakt8";
+const repoOwner = "roptant";
 const repoName = "rewind";
 
 const latestReleaseUrl = `https://github.com/${repoOwner}/${repoName}/releases/latest`;

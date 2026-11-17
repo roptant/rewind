@@ -2,7 +2,7 @@ import { spawn } from "child_process";
 import { execFile } from "child_process";
 import { access, copyFile, mkdir, readdir, readFile, readlink, rename, unlink, writeFile } from "fs/promises";
 import { constants as fsConstants } from "fs";
-import { dirname, join, resolve } from "path";
+import { delimiter, dirname, join, resolve } from "path";
 import { promisify } from "util";
 import { LazerDBReader, lazerFilePath } from "@rewind/osu-local/db-reader";
 import { ParsedOszArchive, ParsedOsuDifficulty } from "./OszArchive";
@@ -94,35 +94,38 @@ export async function isLazerRealmLocked(lazerFolder: string): Promise<boolean> 
 
   if (process.platform === "win32") {
     if (await fileExists(lockPath)) {
+      const probePath = `${lockPath}.rewind-probe.${process.pid}`;
       try {
-        // When osu!lazer has client.realm open on Windows, client.realm.lock is held without FILE_SHARE_DELETE,
-        // so an in-place rename fails with EBUSY/EPERM/EACCES.
-        await rename(lockPath, lockPath);
+        // When osu!lazer has client.realm open on Windows, Realm Core holds client.realm.lock without
+        // FILE_SHARE_DELETE, so renaming it fails with EBUSY/EPERM/EACCES. Avoid checking tasklist for
+        // "osu!.exe" because osu!stable uses the same executable name on Windows.
+        await rename(lockPath, probePath);
+        await rename(probePath, lockPath);
       } catch (err: unknown) {
+        await rename(probePath, lockPath).catch(() => undefined);
         const code = (err as NodeJS.ErrnoException)?.code;
         if (code === "EBUSY" || code === "EPERM" || code === "EACCES") {
           return true;
         }
       }
     }
-    try {
-      const { stdout } = await execFileAsync("tasklist", ["/FI", "IMAGENAME eq osu!.exe", "/FO", "CSV", "/NH"]);
-      if (stdout.toLowerCase().includes('"osu!.exe"')) {
-        return true;
-      }
-    } catch {
-      // Ignore if tasklist is unavailable
-    }
   }
 
   return false;
 }
 
-function resolveRealmModulePath(): string {
+function resolveRealmPaths(): { realmModulePath: string; nodeModulesPaths: string[] } {
   const req: NodeRequire = typeof __non_webpack_require__ !== "undefined" ? __non_webpack_require__ : require;
   const pkgJsonPath = req.resolve("realm/package.json");
-  // In packaged Electron builds with asarUnpack, load from app.asar.unpacked so the native .node binary is accessible
-  return dirname(pkgJsonPath).replace(/app\.asar([/\\])/, "app.asar.unpacked$1");
+  const asarRealmDir = dirname(pkgJsonPath);
+  // In packaged Electron builds with asarUnpack, load from app.asar.unpacked so the native .node binary is accessible,
+  // while keeping both app.asar.unpacked/node_modules and app.asar/node_modules on NODE_PATH for transitive dependencies.
+  const unpackedRealmDir = asarRealmDir.replace(/app\.asar([/\\])/, "app.asar.unpacked$1");
+  const nodeModulesPaths = Array.from(new Set([dirname(unpackedRealmDir), dirname(asarRealmDir)]));
+  return {
+    realmModulePath: unpackedRealmDir,
+    nodeModulesPaths,
+  };
 }
 
 interface WorkerFileEntry {
@@ -132,6 +135,7 @@ interface WorkerFileEntry {
 
 interface WorkerPayload {
   realmModulePath: string;
+  nodeModulesPaths: string[];
   realmPath: string;
   setHash: string;
   onlineSetId: number;
@@ -157,6 +161,8 @@ const REALM_IMPORT_WORKER_SCRIPT = `
 "use strict";
 // Electron 19 embeds Node 16 where globalThis.fetch is undefined; @realm/fetch only uses it for Atlas Sync.
 globalThis.fetch = globalThis.fetch || (() => Promise.reject(new Error("Network disabled in offline Realm worker")));
+const pathMod = require("path");
+const Module = require("module");
 
 const chunks = [];
 process.stdin.on("data", (c) => chunks.push(c));
@@ -164,6 +170,11 @@ process.stdin.on("end", async () => {
   let realm;
   try {
     const payload = JSON.parse(Buffer.concat(chunks).toString("utf-8"));
+    if (Array.isArray(payload.nodeModulesPaths) && payload.nodeModulesPaths.length > 0) {
+      const existing = process.env.NODE_PATH ? process.env.NODE_PATH.split(pathMod.delimiter).filter(Boolean) : [];
+      process.env.NODE_PATH = Array.from(new Set([...payload.nodeModulesPaths, ...existing])).join(pathMod.delimiter);
+      Module._initPaths();
+    }
     const Realm = require(payload.realmModulePath);
     const UUID = Realm.BSON.UUID;
 
@@ -418,11 +429,19 @@ process.stdin.on("end", async () => {
 `;
 
 function runRealmWorker(payload: WorkerPayload): Promise<WorkerResult> {
+  const mergedNodePath = Array.from(
+    new Set([
+      ...payload.nodeModulesPaths,
+      ...(process.env.NODE_PATH ? process.env.NODE_PATH.split(delimiter).filter(Boolean) : []),
+    ]),
+  ).join(delimiter);
+
   return new Promise((resolvePromise, rejectPromise) => {
     const child = spawn(process.execPath, ["-e", REALM_IMPORT_WORKER_SCRIPT], {
       env: {
         ...process.env,
         ELECTRON_RUN_AS_NODE: "1",
+        NODE_PATH: mergedNodePath,
       },
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -541,9 +560,12 @@ export async function importOszToLazerOffline(
 
   const status = options?.onlineMetadata?.status ?? -3;
 
+  const { realmModulePath, nodeModulesPaths } = resolveRealmPaths();
+
   try {
     await runRealmWorker({
-      realmModulePath: resolveRealmModulePath(),
+      realmModulePath,
+      nodeModulesPaths,
       realmPath,
       setHash: archive.setHash,
       onlineSetId,
