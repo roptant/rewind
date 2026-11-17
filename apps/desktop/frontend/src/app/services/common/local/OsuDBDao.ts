@@ -8,6 +8,7 @@ import { injectable } from "inversify";
 
 const mapToBlueprint = (b: DBBeatmap): BlueprintInfo => {
   return {
+    client: "stable",
     md5Hash: b.md5Hash,
     audioFileName: b.audioFileName,
     folderName: b.folderName,
@@ -33,7 +34,9 @@ export class OsuDBDao {
   }
 
   private get osuDbPath() {
-    return join(this.osuFolderService.getOsuFolder(), "osu!.db");
+    const stableFolder = this.osuFolderService.getStableFolder();
+    if (!stableFolder) throw new Error("No osu!stable folder is set");
+    return join(stableFolder, "osu!.db");
   }
 
   private async createReader() {

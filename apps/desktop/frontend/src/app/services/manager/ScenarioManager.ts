@@ -91,10 +91,14 @@ export class ScenarioManager {
     this.scenario$.next({ status: "LOADING" });
 
     const replay = await this.replayService.retrieveReplay(replayId);
-    const blueprintInfo = await this.blueprintLocatorService.getBlueprintByMD5(replay.beatmapMd5);
+    // The beatmap is looked up in both osu! installations, but preferably in the one the replay was played on
+    const blueprintInfo = await this.blueprintLocatorService.getBlueprintByMD5(replay.beatmapMd5, replay.client);
     if (!blueprintInfo) {
-      throw Error(`Could not find the beatmap of the replay (MD5=${replay.beatmapMd5}). Is it imported in osu!?`);
+      throw Error(
+        `Could not find the beatmap of the replay (MD5=${replay.beatmapMd5}). Is it imported in osu! or osu!lazer?`,
+      );
     }
+    console.log(`Replay played on osu!${replay.client}, beatmap found in osu!${blueprintInfo.client}`);
 
     const resolveFile = (fileName: string) => this.blueprintLocatorService.resolveFilePath(blueprintInfo, fileName);
 

@@ -13,28 +13,28 @@ export class ReplayFileWatcher {
   }
 
   public startWatching() {
-    this.osuFolderService.replaysFolder$.subscribe(this.onNewReplayFolder.bind(this));
+    this.osuFolderService.replaysFolders$.subscribe(this.onNewReplayFolders.bind(this));
   }
 
-  // Unsubscribes from the old replay folder and starts listening on the new folder that was given
-  // TODO: In the future we might want to watch on a list of folders and not just the osu! folder
-  private onNewReplayFolder(folder: string) {
+  // Unsubscribes from the old replay folders and starts listening on the new folders that were given (the "Replays"
+  // folder of osu!stable and the "exports" folder of osu!lazer if both are used)
+  private onNewReplayFolders(folders: string[]) {
     // For now, we just use .close()
     // We could make it cleaner by using .unwatch() and adding new files to watch
     if (this.watcher) {
       void this.watcher.close();
+      this.watcher = undefined;
+    }
+    if (folders.length === 0) {
+      return;
     }
 
-    const globPattern = folder;
-    console.log(`Watching for replays (.osr) in folder: ${folder} with pattern: ${globPattern}`);
-    this.watcher = chokidar.watch(globPattern, {
+    console.log(`Watching for replays (.osr) in folders: ${folders.join(", ")}`);
+    this.watcher = chokidar.watch(folders, {
       // ignoreInitial must be true otherwise addDir will be triggered for every folder initially.
       ignoreInitial: true,
       persistent: true,
       depth: 0, // if somehow osu! is trolling, this will prevent it
-    });
-    this.watcher.on("ready", () => {
-      console.log("");
     });
     this.watcher.on("add", (path) => {
       if (!path.endsWith(".osr")) {

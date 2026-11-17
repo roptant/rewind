@@ -11,6 +11,8 @@ import { JSONSchemaType } from "ajv";
 
 export type OsuClient = "stable" | "lazer";
 
+export const OSU_CLIENTS: OsuClient[] = ["stable", "lazer"];
+
 const filesToCheck: Record<OsuClient, string[]> = {
   stable: ["osu!.db", "scores.db", "Skins"],
   lazer: ["client.realm", "files"],
@@ -31,6 +33,7 @@ async function canAccessFiles(folderPath: string, files: string[]) {
  * @param client the osu! client that the folder should belong to
  */
 export async function osuFolderSanityCheck(osuFolderPath: string, client: OsuClient) {
+  if (!osuFolderPath) return false;
   return canAccessFiles(osuFolderPath, filesToCheck[client]);
 }
 
@@ -56,30 +59,63 @@ export async function detectOsuFolder(directoryPath: string): Promise<OsuFolder 
   return null;
 }
 
+/**
+ * The default locations of the osu! installations, used to pre-fill the setup screen.
+ */
+export function defaultOsuFolderCandidates(client: OsuClient): string[] {
+  const { platform, env } = process;
+  const home = env["HOME"] ?? env["USERPROFILE"] ?? "";
+  if (client === "stable") {
+    return platform === "win32" && env["LOCALAPPDATA"] ? [join(env["LOCALAPPDATA"], "osu!")] : [];
+  }
+  switch (platform) {
+    case "win32":
+      return env["APPDATA"] ? [join(env["APPDATA"], "osu")] : [];
+    case "darwin":
+      return [join(home, "Library", "Application Support", "osu")];
+    default:
+      return [join(env["XDG_DATA_HOME"] ?? join(home, ".local", "share"), "osu")];
+  }
+}
+
+/**
+ * Returns the first default location of the given client that contains a valid osu! installation.
+ */
+export async function guessOsuFolder(client: OsuClient): Promise<string | null> {
+  for (const candidate of defaultOsuFolderCandidates(client)) {
+    const folder = await detectOsuFolder(candidate);
+    if (folder?.client === client) return folder.path;
+  }
+  return null;
+}
+
 interface OsuSettings {
-  client: OsuClient;
+  // An empty string means that the installation is not used
   osuStablePath: string;
   osuLazerPath: string;
 }
 
 export const DEFAULT_OSU_SETTINGS: OsuSettings = Object.freeze({
-  client: "stable",
   osuStablePath: "",
   osuLazerPath: "",
 });
 export const OsuSettingsSchema: JSONSchemaType<OsuSettings> = {
   type: "object",
   properties: {
-    client: { type: "string", enum: ["stable", "lazer"], default: DEFAULT_OSU_SETTINGS.client },
     osuStablePath: { type: "string", default: DEFAULT_OSU_SETTINGS.osuStablePath },
     osuLazerPath: { type: "string", default: DEFAULT_OSU_SETTINGS.osuLazerPath },
   },
   required: [],
 };
 
+/**
+ * Manages the osu! installations that Rewind uses. Both osu!stable and osu!lazer can be used at the same time, so that
+ * replays can be loaded regardless of which client the beatmap was imported in.
+ */
 @injectable()
 export class OsuFolderService extends PersistentService<OsuSettings> {
-  public replaysFolder$ = new BehaviorSubject<string>("");
+  // The folders that are watched for new replays ("Replays" for osu!stable and "exports" for osu!lazer)
+  public replaysFolders$ = new BehaviorSubject<string[]>([]);
   // Only for osu!stable since osu!lazer doesn't store the beatmaps in folders
   public songsFolder$ = new BehaviorSubject<string>("");
 
@@ -96,16 +132,17 @@ export class OsuFolderService extends PersistentService<OsuSettings> {
   }
 
   async onFolderChange(osuSettings: OsuSettings) {
-    const osuFolder = osuSettings.client === "lazer" ? osuSettings.osuLazerPath : osuSettings.osuStablePath;
+    const stableFolder = osuSettings.osuStablePath;
+    const lazerFolder = osuSettings.osuLazerPath;
     // osu!lazer doesn't have a "Replays" folder, the replays are only written as files when they get exported
-    const replaysFolder = join(osuFolder, osuSettings.client === "lazer" ? "exports" : "Replays");
-    ipcRenderer.send("osuFolderChanged", osuFolder, replaysFolder);
-    this.replaysFolder$.next(replaysFolder);
-    if (osuSettings.client === "lazer") {
+    const replaysFolders = [stableFolder && join(stableFolder, "Replays"), lazerFolder && join(lazerFolder, "exports")];
+    this.replaysFolders$.next(replaysFolders.filter((f) => !!f));
+    ipcRenderer.send("osuFolderChanged", { stableFolder, lazerFolder });
+    if (!stableFolder) {
       this.songsFolder$.next("");
     } else {
       const userId = await username();
-      const songsFolder = (await determineSongsFolder(osuFolder, userId as string)) as string;
+      const songsFolder = (await determineSongsFolder(stableFolder, userId as string)) as string;
       // The settings could have been changed in the meantime
       if (this.settings === osuSettings) {
         this.songsFolder$.next(songsFolder);
@@ -113,23 +150,39 @@ export class OsuFolderService extends PersistentService<OsuSettings> {
     }
   }
 
-  getOsuClient(): OsuClient {
-    return this.settings.client;
+  /**
+   * @returns the folder of the given osu! client or `undefined` if that client is not used
+   */
+  getFolder(client: OsuClient): string | undefined {
+    return (client === "lazer" ? this.settings.osuLazerPath : this.settings.osuStablePath) || undefined;
   }
 
-  getOsuFolder(): string {
-    return this.settings.client === "lazer" ? this.settings.osuLazerPath : this.settings.osuStablePath;
+  getStableFolder() {
+    return this.getFolder("stable");
   }
 
-  setOsuFolder({ path, client }: OsuFolder) {
-    console.log(`osu! folder was set to '${path}' (${client})`);
+  getLazerFolder() {
+    return this.getFolder("lazer");
+  }
+
+  // The osu! clients that are used
+  getClients(): OsuClient[] {
+    return OSU_CLIENTS.filter((client) => this.getFolder(client) !== undefined);
+  }
+
+  hasClient(client: OsuClient): boolean {
+    return this.getFolder(client) !== undefined;
+  }
+
+  /**
+   * Sets the folders of both osu! clients at once.
+   * @param folders the folder of each client, `null` if the client should not be used anymore
+   */
+  setOsuFolders(folders: Record<OsuClient, string | null>) {
+    console.log(`osu! folders were set to stable='${folders.stable ?? ""}' lazer='${folders.lazer ?? ""}'`);
     this.changeSettings((draft) => {
-      draft.client = client;
-      if (client === "lazer") {
-        draft.osuLazerPath = path;
-      } else {
-        draft.osuStablePath = path;
-      }
+      draft.osuStablePath = folders.stable ?? "";
+      draft.osuLazerPath = folders.lazer ?? "";
     });
   }
 
@@ -137,7 +190,15 @@ export class OsuFolderService extends PersistentService<OsuSettings> {
     return detectOsuFolder(directoryPath);
   }
 
+  // The clients whose folders are set and valid
+  async validClients(): Promise<OsuClient[]> {
+    const valid = await Promise.all(
+      OSU_CLIENTS.map(async (client) => osuFolderSanityCheck(this.getFolder(client) ?? "", client)),
+    );
+    return OSU_CLIENTS.filter((_, i) => valid[i]);
+  }
+
   async hasValidOsuFolderSet(): Promise<boolean> {
-    return osuFolderSanityCheck(this.getOsuFolder(), this.getOsuClient());
+    return (await this.validClients()).length > 0;
   }
 }

@@ -13,6 +13,7 @@ export class ReplayService {
     // Currently using readOsr is bugged, so we need to use it from the main process
     const res = await ipcRenderer.invoke("readOsr", filePath);
     return {
+      client: res.isLazerReplay ? "lazer" : "stable",
       gameVersion: res.gameVersion,
       frames: parseReplayFramesFromRaw(res.replay_data),
       mods: modsFromBitmask(res.mods),

@@ -4,7 +4,7 @@ import { join } from "path";
 import { createHash } from "crypto";
 import { filterFilenamesInDirectory } from "@rewind/osu-local/utils";
 import { injectable } from "inversify";
-import { OsuFolderService } from "./OsuFolderService";
+import { OSU_CLIENTS, OsuClient, OsuFolderService } from "./OsuFolderService";
 import { BlueprintInfo } from "../../../model/BlueprintInfo";
 import { OsuDBDao } from "./OsuDBDao";
 import { LazerDBDao } from "./LazerDBDao";
@@ -22,6 +22,7 @@ function mapToLocalBlueprint(
 ): BlueprintInfo {
   const { metadata } = blueprint.blueprintInfo;
   return {
+    client: "stable",
     creator: "", // TODO: ?
     title: metadata.title,
     osuFileName,
@@ -38,7 +39,7 @@ function mapToLocalBlueprint(
 type BlueprintMD5 = string;
 
 /**
- * Service responsible for locating the blueprints.
+ * Service responsible for locating the blueprints in all osu! installations that are used (osu!stable and osu!lazer).
  *
  * For osu!stable it mainly uses the `osu!.db` to get the majority of the blueprints. However, once the user imports new
  * beatmaps, the `osu!.db` doesn't get immediately updated (no flushing), thus we have to find out which ones were added
@@ -48,13 +49,21 @@ type BlueprintMD5 = string;
  */
 @injectable()
 export class BlueprintLocatorService {
-  private blueprints: Record<BlueprintMD5, BlueprintInfo> = {};
+  private stableBlueprints: Record<BlueprintMD5, BlueprintInfo> = {};
+  // Whether the osu!stable blueprints have to be read again completely (e.g. the Songs folder has changed)
+  private stableNeedsFullRead = true;
 
   constructor(
     private readonly osuDbDao: OsuDBDao,
     private readonly lazerDbDao: LazerDBDao,
     private readonly osuFolderService: OsuFolderService,
-  ) {}
+  ) {
+    // Also emits once the Songs folder has been determined (which happens asynchronously after the settings change)
+    this.osuFolderService.songsFolder$.subscribe(() => {
+      this.stableBlueprints = {};
+      this.stableNeedsFullRead = true;
+    });
+  }
 
   private get songsFolder() {
     return this.osuFolderService.songsFolder$.getValue();
@@ -64,16 +73,18 @@ export class BlueprintLocatorService {
     const freshBlueprints = await this.osuDbDao.getAllBlueprints();
     const lastModifiedTime = await this.osuDbDao.getOsuDbLastModifiedTime();
 
-    console.log(`Reading the osu!/Songs folder: ${this.songsFolder}`);
-    const candidates = await getNewFolderCandidates(this.songsFolder, new Date(lastModifiedTime));
+    // The Songs folder might not be determined yet, the beatmaps of the osu!.db can be used anyway
+    const songsFolder = this.songsFolder;
+    console.log(`Reading the osu!/Songs folder: ${songsFolder}`);
+    const candidates = songsFolder ? await getNewFolderCandidates(songsFolder, new Date(lastModifiedTime)) : [];
     if (candidates.length > 0) {
       console.log(`New blueprint candidates (${candidates.length}) : ${candidates.join(",")}`);
     }
 
     for (const songFolder of candidates) {
-      const osuFiles = await listOsuFiles(join(this.songsFolder, songFolder));
+      const osuFiles = await listOsuFiles(join(songsFolder, songFolder));
       for (const osuFile of osuFiles) {
-        const fileName = join(this.songsFolder, songFolder, osuFile);
+        const fileName = join(songsFolder, songFolder, osuFile);
         console.log(`Reading file ${fileName}`);
         const data = await readFile(fileName);
         const hash = createHash("md5");
@@ -84,42 +95,73 @@ export class BlueprintLocatorService {
       }
     }
 
-    this.blueprints = {};
-    freshBlueprints.forEach(this.addNewBlueprint.bind(this));
-    return this.blueprints;
-  }
-
-  // Usually for watchers
-  private addNewBlueprint(blueprint: BlueprintInfo) {
-    this.blueprints[blueprint.md5Hash] = blueprint;
+    const blueprints: Record<BlueprintMD5, BlueprintInfo> = {};
+    freshBlueprints.forEach((blueprint) => (blueprints[blueprint.md5Hash] = blueprint));
+    // Read again if the Songs folder was not known yet or has changed in the meantime
+    this.stableNeedsFullRead = !songsFolder || songsFolder !== this.songsFolder;
+    return (this.stableBlueprints = blueprints);
   }
 
   async blueprintHasBeenAdded() {
+    if (this.stableNeedsFullRead) {
+      return true;
+    }
     // It's better to rely on the "osu!.db" than the ones we received from watching.
     // But ofc, we if we read from osu!.db again there might still be some folders that have not been properly flushed.
     if (await this.osuDbDao.hasChanged()) {
       return true;
+    }
+    if (!this.songsFolder) {
+      return false;
     }
     const s = await stat(this.songsFolder);
     const t = await this.osuDbDao.getOsuDbLastModifiedTime();
     return s.mtime.getTime() > t;
   }
 
-  async getAllBlueprints(): Promise<Record<string, BlueprintInfo>> {
-    if (this.osuFolderService.getOsuClient() === "lazer") {
-      // Cached in the DAO and only read again if osu!lazer has written to its database
-      return this.lazerDbDao.getAllBlueprints();
+  /**
+   * @returns the blueprints of the given osu! client by their MD5 hash (empty if the client is not used or its data
+   * could not be read, so that the other client can still be used)
+   */
+  async getBlueprintsOfClient(client: OsuClient): Promise<Record<BlueprintMD5, BlueprintInfo>> {
+    if (!this.osuFolderService.hasClient(client)) {
+      return {};
     }
-    const needToCheckAgain = await this.blueprintHasBeenAdded();
-    if (needToCheckAgain) {
-      await this.completeRead();
+    try {
+      if (client === "lazer") {
+        // Cached in the DAO and only read again if osu!lazer has written to its database
+        return await this.lazerDbDao.getAllBlueprints();
+      }
+      if (await this.blueprintHasBeenAdded()) {
+        await this.completeRead();
+      }
+      return this.stableBlueprints;
+    } catch (err) {
+      console.error(`Could not read the beatmaps of osu!${client}`, err);
+      return {};
     }
-    return this.blueprints;
   }
 
-  async getBlueprintByMD5(md5: string): Promise<BlueprintInfo | undefined> {
-    const maps = await this.getAllBlueprints();
-    return maps[md5];
+  /**
+   * @returns the blueprints of all osu! installations, if a beatmap is imported in both, the osu!stable one is used
+   */
+  async getAllBlueprints(): Promise<Record<BlueprintMD5, BlueprintInfo>> {
+    const [stable, lazer] = await Promise.all(OSU_CLIENTS.map((client) => this.getBlueprintsOfClient(client)));
+    return { ...lazer, ...stable };
+  }
+
+  /**
+   * Finds the blueprint in any of the osu! installations.
+   * @param md5 the MD5 hash of the .osu file
+   * @param preferredClient the client that is looked at first (e.g. the one the replay was played on)
+   */
+  async getBlueprintByMD5(md5: string, preferredClient: OsuClient = "stable"): Promise<BlueprintInfo | undefined> {
+    const clients = [preferredClient, ...OSU_CLIENTS.filter((c) => c !== preferredClient)];
+    for (const client of clients) {
+      const blueprint = (await this.getBlueprintsOfClient(client))[md5];
+      if (blueprint) return blueprint;
+    }
+    return undefined;
   }
 
   /**
@@ -129,9 +171,10 @@ export class BlueprintLocatorService {
    * @returns `undefined` if the file is not part of the beatmap set (only known for osu!lazer)
    */
   resolveFilePath(blueprint: BlueprintInfo, fileName: string): string | undefined {
-    if (blueprint.lazerFiles) {
-      const file = findLazerFile(blueprint.lazerFiles, fileName);
-      return file && join(this.osuFolderService.getOsuFolder(), lazerFilePath(file.hash));
+    if (blueprint.client === "lazer") {
+      const lazerFolder = this.osuFolderService.getLazerFolder();
+      const file = blueprint.lazerFiles && findLazerFile(blueprint.lazerFiles, fileName);
+      return lazerFolder && file ? join(lazerFolder, lazerFilePath(file.hash)) : undefined;
     }
     return join(this.songsFolder, blueprint.folderName, fileName);
   }

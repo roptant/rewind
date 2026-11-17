@@ -40,6 +40,10 @@ export function RewindApp() {
       navigate("/app/analyzer");
       void theater.analyzer.loadReplay(file);
     });
+    // Allows adding or changing the osu!stable and osu!lazer installations
+    ipcRenderer.on("onChangeOsuFolders", () => {
+      navigate("/setup");
+    });
 
     (async function () {
       if (!(await theater.analyzer.osuFolderService.hasValidOsuFolderSet())) {
@@ -47,9 +51,10 @@ export function RewindApp() {
         navigate("/setup");
       } else {
         const { osuFolderService } = theater.analyzer;
-        console.log(`osu! folder = ${osuFolderService.getOsuFolder()} (${osuFolderService.getOsuClient()})`);
+        console.log(`osu!stable folder = ${osuFolderService.getStableFolder() ?? "(not used)"}`);
+        console.log(`osu!lazer folder = ${osuFolderService.getLazerFolder() ?? "(not used)"}`);
         console.log(`osu!/Songs folder = ${osuFolderService.songsFolder$.getValue()}`);
-        console.log(`osu!/Replays folder = ${osuFolderService.replaysFolder$.getValue()}`);
+        console.log(`Replays folders = ${osuFolderService.replaysFolders$.getValue().join(", ")}`);
         navigate("/app/analyzer");
       }
     })();

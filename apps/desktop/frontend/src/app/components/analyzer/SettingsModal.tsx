@@ -27,7 +27,7 @@ import { DEFAULT_ANALYSIS_CURSOR_SETTINGS } from "../../services/analysis/analys
 import { frontendAPI } from "../../api";
 
 const sourceName: Record<SkinSource, string> = {
-  osu: "osu!/Skins Folder",
+  osu: "osu!stable",
   lazer: "osu!lazer",
   rewind: "Rewind",
 };

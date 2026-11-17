@@ -1,6 +1,8 @@
 import { LazerNamedFile } from "@rewind/osu-local/db-reader";
 
 export interface BlueprintInfo {
+  // The osu! client the beatmap is imported in
+  client: "stable" | "lazer";
   md5Hash: string;
   lastPlayed: Date;
   title: string;

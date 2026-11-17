@@ -7,23 +7,26 @@ import InfoIcon from "@mui/icons-material/Info";
 import { ignoreFocus } from "../../utils/focus";
 import CloseIcon from "@mui/icons-material/Close";
 
+const replayHints = {
+  stable: "In osu! press F2 while being at a score/fail screen to load the replay",
+  lazer: "In osu!lazer export the replay at the results screen to load it",
+};
+
 function EmptyState() {
   const analysisApp = useAnalysisApp();
-  const isLazer = analysisApp.osuFolderService.getOsuClient() === "lazer";
+  const clients = analysisApp.osuFolderService.getClients();
   return (
     <Stack gap={2} alignItems={"center"}>
       <Stack gap={1} alignItems={"center"}>
         <InfoIcon sx={{ height: "2em", width: "2em" }} />
         <Typography>No replay loaded</Typography>
       </Stack>
-      <Stack gap={1} alignItems={"center"} direction={"row"}>
-        <Box component={LightningBoltIcon} sx={{ height: "1em", color: "text.secondary" }} />
-        <Typography color={"text.secondary"}>
-          {isLazer
-            ? "In osu!lazer export the replay at the results screen to load it"
-            : "In osu! press F2 while being at a score/fail screen to load the replay"}
-        </Typography>
-      </Stack>
+      {clients.map((client) => (
+        <Stack gap={1} alignItems={"center"} direction={"row"} key={client}>
+          <Box component={LightningBoltIcon} sx={{ height: "1em", color: "text.secondary" }} />
+          <Typography color={"text.secondary"}>{replayHints[client]}</Typography>
+        </Stack>
+      ))}
       <Stack gap={1} alignItems={"center"} direction={"row"}>
         <Box component={LightningBoltIcon} sx={{ height: "1em", color: "text.secondary" }} />
         <Typography color={"text.secondary"}>

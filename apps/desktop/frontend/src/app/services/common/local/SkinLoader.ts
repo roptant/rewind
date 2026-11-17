@@ -59,8 +59,29 @@ export class SkinLoader {
 
   // TODO: AppResourcesPath and get the included Rewind Skins
 
+  // The skins of all osu! installations that are used
   async loadSkinList(): Promise<SkinId[]> {
-    if (this.osuFolderService.getOsuClient() === "lazer") {
+    const [stableSkins, lazerSkins] = await Promise.all([this.loadStableSkinList(), this.loadLazerSkinList()]);
+    return stableSkins.concat(lazerSkins);
+  }
+
+  private async loadStableSkinList(): Promise<SkinId[]> {
+    const stableFolder = this.osuFolderService.getStableFolder();
+    if (!stableFolder) return [];
+    try {
+      const skinNames = await SkinFolderReader.listSkinsInFolder(join(stableFolder, "Skins"), {
+        skinIniRequired: false,
+      });
+      return skinNames.map((name): SkinId => ({ source: "osu", name }));
+    } catch (err) {
+      console.error("Could not list the osu!stable skins", err);
+      return [];
+    }
+  }
+
+  private async loadLazerSkinList(): Promise<SkinId[]> {
+    if (!this.osuFolderService.hasClient("lazer")) return [];
+    try {
       const skins = await this.lazerDbDao.getAllSkins();
       return (
         skins
@@ -69,11 +90,10 @@ export class SkinLoader {
           .map((skin): SkinId => ({ source: "lazer", name: skin.name }))
           .sort((a, b) => a.name.localeCompare(b.name))
       );
+    } catch (err) {
+      console.error("Could not list the osu!lazer skins", err);
+      return [];
     }
-    const skinNames = await SkinFolderReader.listSkinsInFolder(join(this.osuFolderService.getOsuFolder(), "Skins"), {
-      skinIniRequired: false,
-    });
-    return skinNames.map((name): SkinId => ({ source: "osu", name }));
   }
 
   sourcePath(source: string) {
@@ -81,7 +101,7 @@ export class SkinLoader {
       case "rewind":
         return this.rewindSkinsFolder;
       case "osu":
-        return join(this.osuFolderService.getOsuFolder(), "Skins");
+        return join(this.osuFolderService.getStableFolder() ?? "", "Skins");
     }
     return "";
   }
@@ -97,7 +117,10 @@ export class SkinLoader {
       if (!skin) {
         throw new Error(`Could not find the osu!lazer skin '${skinId.name}'`);
       }
-      const lazerFolder = this.osuFolderService.getOsuFolder();
+      const lazerFolder = this.osuFolderService.getLazerFolder();
+      if (!lazerFolder) {
+        throw new Error(`Can not load the osu!lazer skin '${skinId.name}' since no osu!lazer folder is set`);
+      }
       const resolver = await SkinFolderReader.getMappedSkinResolver(
         skin.files.map((f) => ({ fileName: f.filename, path: join(lazerFolder, lazerFilePath(f.hash)) })),
       );

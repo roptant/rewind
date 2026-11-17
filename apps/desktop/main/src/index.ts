@@ -67,9 +67,9 @@ function createFrontendWindow() {
     return { action: "deny" };
   });
 
-  ipcMain.on("osuFolderChanged", (event, folder: string, replaysFolder?: string) => {
+  ipcMain.on("osuFolderChanged", (event, folders: OsuFolders) => {
     // TODO: frontend.setMenu()
-    Menu.setApplicationMenu(createMenu(folder, replaysFolder));
+    Menu.setApplicationMenu(createMenu(folders));
   });
 
   // In DEV mode we want to utilize hot reloading, therefore we are going to connect to the development server.
@@ -99,7 +99,7 @@ function handleAllWindowClosed() {
 function handleReady() {
   const isDev = isDevelopmentMode();
 
-  Menu.setApplicationMenu(createMenu(null));
+  Menu.setApplicationMenu(createMenu({}));
 
   console.log(
     "Booting Electron application with settings: ",
@@ -149,9 +149,16 @@ function handleActivate() {
   app.on("activate", handleActivate);
 })();
 
-// `replaysFolder` is "Replays" for osu!stable and "exports" for osu!lazer
-function createMenu(osuFolder: string | null, replaysFolder?: string) {
-  const osuFolderKnown = !!osuFolder as boolean;
+// The folders of the osu! installations that are used, both can be used at the same time
+interface OsuFolders {
+  stableFolder?: string;
+  lazerFolder?: string;
+}
+
+function createMenu({ stableFolder, lazerFolder }: OsuFolders) {
+  const osuFolderKnown = !!stableFolder || !!lazerFolder;
+  // osu!stable stores the replays in "Replays" and osu!lazer exports them to "exports"
+  const replaysFolder = stableFolder ? join(stableFolder, "Replays") : join(lazerFolder ?? "", "exports");
   const isMac = process.platform === "darwin";
 
   const template: (Electron.MenuItemConstructorOptions | Electron.MenuItem)[] = [];
@@ -206,7 +213,7 @@ function createMenu(osuFolder: string | null, replaysFolder?: string) {
           enabled: osuFolderKnown,
           click: async () => {
             const { canceled, filePaths } = await dialog.showOpenDialog({
-              defaultPath: replaysFolder ?? join(osuFolder ?? "", "Replays"),
+              defaultPath: replaysFolder,
               properties: ["openFile"],
               filters: [
                 { name: "osu! Replay", extensions: ["osr"] },
@@ -242,9 +249,22 @@ function createMenu(osuFolder: string | null, replaysFolder?: string) {
         {
           label: "Open osu! Folder",
           click: async () => {
-            if (osuFolder) await shell.openPath(osuFolder);
+            if (stableFolder) await shell.openPath(stableFolder);
           },
-          enabled: osuFolderKnown,
+          enabled: !!stableFolder,
+        },
+        {
+          label: "Open osu!lazer Folder",
+          click: async () => {
+            if (lazerFolder) await shell.openPath(lazerFolder);
+          },
+          enabled: !!lazerFolder,
+        },
+        {
+          label: "Change osu! Folders...",
+          click: () => {
+            windows.frontend?.webContents.send("onChangeOsuFolders");
+          },
         },
         { type: "separator" },
         { role: "close" },

@@ -2,6 +2,8 @@
 import { LazerMod, OsuClassicMod, ReplayFrame } from "@osujs/core";
 
 export type OsuReplay = {
+  // The osu! client the replay was played on (determined by the game version of the replay)
+  client: "stable" | "lazer";
   md5hash: string;
   beatmapMd5: string;
   gameVersion: number;

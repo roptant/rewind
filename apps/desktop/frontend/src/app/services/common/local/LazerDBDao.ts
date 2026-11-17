@@ -11,6 +11,7 @@ const REALM_HEADER_SIZE = 24;
 
 const mapToBlueprint = (b: LazerBeatmap): BlueprintInfo => {
   return {
+    client: "lazer",
     md5Hash: b.md5Hash,
     audioFileName: b.audioFileName,
     folderName: "",
@@ -44,7 +45,9 @@ export class LazerDBDao {
   }
 
   private get realmPath() {
-    return join(this.osuFolderService.getOsuFolder(), "client.realm");
+    const lazerFolder = this.osuFolderService.getLazerFolder();
+    if (!lazerFolder) throw new Error("No osu!lazer folder is set");
+    return join(lazerFolder, "client.realm");
   }
 
   async getRealmVersion(): Promise<string> {
