@@ -18,10 +18,10 @@ function niceBytes(x: any) {
 }
 
 function versionUrl(version: string) {
-  const repoOwner = "abstrakt8";
+  const repoOwner = "roptant";
   const repoName = "rewind";
   // The version does not contain "v"
-  return `https://github.com/${repoOwner}/${repoName}/releases/v${version}`;
+  return `https://github.com/${repoOwner}/${repoName}/releases/tag/v${version}`;
 }
 
 export function UpdateModal() {

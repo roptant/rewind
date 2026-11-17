@@ -1,6 +1,6 @@
 {
   "name": "rewind",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "license": "MIT",
   "author": "abstrakt",
@@ -45,6 +45,7 @@
     ]
   },
   "dependencies": {
+    "adm-zip": "^0.5.6",
     "ajv": "^8.6.3",
     "chart.js": "^3.5.1",
     "chokidar": "^3.5.2",
@@ -58,6 +59,7 @@
     "inversify": "^6.2.1",
     "lzma": "^2.3.2",
     "node-osr": "^1.2.1",
+    "realm": "^20.2.0",
     "reflect-metadata": "^0.1.13",
     "regenerator-runtime": "0.13.9",
     "rxjs": "^7.3.0",
@@ -112,6 +114,7 @@
     "@svgr/webpack": "^5.4.0",
     "@testing-library/react": "13.3.0",
     "@types/add-zero": "^1.0.1",
+    "@types/adm-zip": "^0.5.0",
     "@types/color-string": "^1.5.0",
     "@types/decimal.js": "^7.4.0",
     "@types/jest": "27.4.1",
@@ -128,7 +131,6 @@
     "@types/ws": "^8.2.0",
     "@typescript-eslint/eslint-plugin": "5.29.0",
     "@typescript-eslint/parser": "5.29.0",
-    "adm-zip": "^0.5.6",
     "babel-jest": "27.5.1",
     "babel-loader": "8.2.2",
     "concurrently": "^7.1.0",
@@ -177,5 +179,10 @@
     "typescript": "^5.7.3",
     "url-loader": "^4.1.1",
     "winston": "^3.3.3"
+  },
+  "description": "osu! replay analyzer",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/roptant/rewind.git"
   }
 }

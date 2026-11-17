@@ -5,6 +5,7 @@ import {
   Button,
   FormControlLabel,
   FormGroup,
+  MenuItem,
   Modal,
   Paper,
   Slider,
@@ -24,7 +25,8 @@ import { DEFAULT_BEATMAP_RENDER_SETTINGS } from "../../services/common/beatmap-r
 import { DEFAULT_SKIN_SETTINGS } from "../../services/common/skin";
 import { DEFAULT_REPLAY_CURSOR_SETTINGS } from "../../services/common/replay-cursor";
 import { DEFAULT_ANALYSIS_CURSOR_SETTINGS } from "../../services/analysis/analysis-cursor";
-import { frontendAPI } from "../../api";
+import { DEFAULT_BEATMAP_DOWNLOAD_SETTINGS } from "../../services/common/beatmap-download";
+import { BeatmapImportTarget, BeatmapMirrorId, frontendAPI } from "../../api";
 
 const sourceName: Record<SkinSource, string> = {
   osu: "osu!stable",
@@ -205,6 +207,77 @@ function PlaybarSettingsSection() {
   );
 }
 
+function BeatmapDownloadSettingsSection() {
+  const { beatmapDownloadSettingsStore } = useCommonManagers();
+  const settings = useObservable(() => beatmapDownloadSettingsStore.settings$, DEFAULT_BEATMAP_DOWNLOAD_SETTINGS);
+
+  return (
+    <Paper elevation={1} sx={{ boxShadow: "none", p: 2 }}>
+      <Stack gap={2}>
+        <Typography variant={"h6"}>Missing Beatmap Downloads</Typography>
+        <FormGroup>
+          <FormControlLabel
+            control={
+              <Switch
+                checked={settings.autoDownload}
+                onChange={(event) =>
+                  beatmapDownloadSettingsStore.changeSettings((s) => (s.autoDownload = event.target.checked))
+                }
+              />
+            }
+            label={"Automatically download missing beatmaps"}
+          />
+          <FormControlLabel
+            control={
+              <Switch
+                checked={settings.noVideo}
+                onChange={(event) =>
+                  beatmapDownloadSettingsStore.changeSettings((s) => (s.noVideo = event.target.checked))
+                }
+              />
+            }
+            label={"Download without video (smaller & faster)"}
+          />
+        </FormGroup>
+        <Stack direction={"row"} gap={2} flexWrap={"wrap"}>
+          <TextField
+            select
+            size={"small"}
+            label={"Import target"}
+            value={settings.preferredTarget}
+            onChange={(event) =>
+              beatmapDownloadSettingsStore.changeSettings(
+                (s) => (s.preferredTarget = event.target.value as BeatmapImportTarget),
+              )
+            }
+            sx={{ minWidth: 220 }}
+          >
+            <MenuItem value={"auto"}>Automatic (match replay client)</MenuItem>
+            <MenuItem value={"lazer"}>osu!lazer (offline Realm)</MenuItem>
+            <MenuItem value={"stable"}>osu!stable (Songs folder)</MenuItem>
+          </TextField>
+          <TextField
+            select
+            size={"small"}
+            label={"Preferred mirror"}
+            value={settings.preferredMirror}
+            onChange={(event) =>
+              beatmapDownloadSettingsStore.changeSettings(
+                (s) => (s.preferredMirror = event.target.value as BeatmapMirrorId),
+              )
+            }
+            sx={{ minWidth: 180 }}
+          >
+            <MenuItem value={"catboy"}>catboy.best (Mino)</MenuItem>
+            <MenuItem value={"nerinyan"}>Nerinyan</MenuItem>
+            <MenuItem value={"osudirect"}>osu.direct</MenuItem>
+          </TextField>
+        </Stack>
+      </Stack>
+    </Paper>
+  );
+}
+
 function ResetAllSettingsSection() {
   const resetSettings = useCallback(() => {
     localStorage.clear();
@@ -219,7 +292,8 @@ function ResetAllSettingsSection() {
 
 function OtherSettings() {
   return (
-    <Stack p={2} gap={1}>
+    <Stack p={2} gap={2}>
+      <BeatmapDownloadSettingsSection />
       <ResetAllSettingsSection />
     </Stack>
   );

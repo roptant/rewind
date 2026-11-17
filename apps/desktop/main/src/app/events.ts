@@ -2,6 +2,10 @@ import { app, dialog, ipcMain } from "electron";
 import { read } from "node-osr";
 import { readFile } from "fs/promises";
 import { isLazerReplayVersion, readLazerScoreInfo } from "@rewind/osu-local/osr-reader";
+import { BeatmapDownloadService } from "./beatmap-downloader/BeatmapDownloadService";
+import { BeatmapMirrorClient } from "./beatmap-downloader/BeatmapMirrorClient";
+import { BeatmapDownloadRequest } from "./beatmap-downloader/types";
+import { windows } from "./windows";
 
 async function userSelectDirectory(defaultPath: string) {
   const { canceled, filePaths } = await dialog.showOpenDialog({ defaultPath, properties: ["openDirectory"] });
@@ -35,6 +39,22 @@ function getPath(type: string) {
   return "";
 }
 
+let beatmapDownloadService: BeatmapDownloadService | undefined;
+
+function getBeatmapDownloadService(): BeatmapDownloadService {
+  if (!beatmapDownloadService) {
+    const mirrorClient = new BeatmapMirrorClient(`Rewind/${app.getVersion()}`);
+    beatmapDownloadService = new BeatmapDownloadService({
+      userDataPath: app.getPath("userData"),
+      mirrorClient,
+      emitProgress: (progress) => {
+        windows.frontend?.webContents.send("onBeatmapDownloadProgress", progress);
+      },
+    });
+  }
+  return beatmapDownloadService;
+}
+
 export function setupEventListeners() {
   ipcMain.handle("getPath", (event, type) => getPath(type));
   ipcMain.handle("selectDirectory", (event, defaultPath) => userSelectDirectory(defaultPath));
@@ -55,5 +75,21 @@ export function setupEventListeners() {
       isLazerReplay: isLazerReplayVersion(replay.gameVersion),
       lazerScoreInfo: readLazerScoreInfo(buffer),
     };
+  });
+
+  ipcMain.handle("lookupBeatmapByMd5", async (event, md5: string) => {
+    return getBeatmapDownloadService().lookupBeatmapByMd5(md5);
+  });
+
+  ipcMain.handle("downloadAndImportBeatmap", async (event, request: BeatmapDownloadRequest) => {
+    return getBeatmapDownloadService().downloadAndImport(request);
+  });
+
+  ipcMain.handle("flushPendingLazerImports", async (event, lazerFolder: string) => {
+    return getBeatmapDownloadService().flushPendingLazerImports(lazerFolder);
+  });
+
+  ipcMain.handle("getBeatmapCacheFolder", () => {
+    return getBeatmapDownloadService().fallbackCacheFolder;
   });
 }

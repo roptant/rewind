@@ -9,6 +9,7 @@ import { BlueprintInfo } from "../../../model/BlueprintInfo";
 import { OsuDBDao } from "./OsuDBDao";
 import { LazerDBDao } from "./LazerDBDao";
 import { findLazerFile, lazerFilePath } from "@rewind/osu-local/db-reader";
+import { frontendAPI } from "../../../api";
 
 const { stat, readFile } = fsPromises;
 
@@ -19,10 +20,11 @@ function mapToLocalBlueprint(
   osuFileName: string,
   folderName: string,
   md5Hash: string,
+  client: "stable" | "cache" = "stable",
 ): BlueprintInfo {
   const { metadata } = blueprint.blueprintInfo;
   return {
-    client: "stable",
+    client,
     creator: "", // TODO: ?
     title: metadata.title,
     osuFileName,
@@ -53,6 +55,10 @@ export class BlueprintLocatorService {
   // Whether the osu!stable blueprints have to be read again completely (e.g. the Songs folder has changed)
   private stableNeedsFullRead = true;
 
+  private cacheFolder?: string;
+  private cacheBlueprints: Record<BlueprintMD5, BlueprintInfo> = {};
+  private cacheNeedsFullRead = true;
+
   constructor(
     private readonly osuDbDao: OsuDBDao,
     private readonly lazerDbDao: LazerDBDao,
@@ -63,10 +69,32 @@ export class BlueprintLocatorService {
       this.stableBlueprints = {};
       this.stableNeedsFullRead = true;
     });
+    this.osuFolderService.settings$.subscribe((settings) => {
+      if (settings.osuLazerPath) {
+        void frontendAPI.flushPendingLazerImports(settings.osuLazerPath).catch((err) => {
+          console.warn("Could not flush pending osu!lazer imports", err);
+        });
+      }
+    });
   }
 
   private get songsFolder() {
     return this.osuFolderService.songsFolder$.getValue();
+  }
+
+  private async getCacheFolder(): Promise<string> {
+    if (!this.cacheFolder) {
+      this.cacheFolder = await frontendAPI.getBeatmapCacheFolder();
+    }
+    return this.cacheFolder;
+  }
+
+  markBlueprintImported(target: "stable" | "lazer" | "cache") {
+    if (target === "stable") {
+      this.stableNeedsFullRead = true;
+    } else if (target === "cache") {
+      this.cacheNeedsFullRead = true;
+    }
   }
 
   private async completeRead() {
@@ -91,7 +119,7 @@ export class BlueprintLocatorService {
         hash.update(data);
         const md5Hash = hash.digest("hex");
         const blueprint = await parseBlueprint(data.toString("utf-8"), { sectionsToRead: METADATA_SECTIONS_TO_READ });
-        freshBlueprints.push(mapToLocalBlueprint(blueprint, osuFile, songFolder, md5Hash));
+        freshBlueprints.push(mapToLocalBlueprint(blueprint, osuFile, songFolder, md5Hash, "stable"));
       }
     }
 
@@ -100,6 +128,39 @@ export class BlueprintLocatorService {
     // Read again if the Songs folder was not known yet or has changed in the meantime
     this.stableNeedsFullRead = !songsFolder || songsFolder !== this.songsFolder;
     return (this.stableBlueprints = blueprints);
+  }
+
+  private async readCacheBlueprints(): Promise<Record<BlueprintMD5, BlueprintInfo>> {
+    if (!this.cacheNeedsFullRead) {
+      return this.cacheBlueprints;
+    }
+    const cacheFolder = await this.getCacheFolder();
+    try {
+      await stat(cacheFolder);
+    } catch {
+      this.cacheNeedsFullRead = false;
+      this.cacheBlueprints = {};
+      return this.cacheBlueprints;
+    }
+
+    const folders = await getNewFolderCandidates(cacheFolder, new Date(0));
+    const blueprints: Record<BlueprintMD5, BlueprintInfo> = {};
+    for (const songFolder of folders) {
+      const osuFiles = await listOsuFiles(join(cacheFolder, songFolder));
+      for (const osuFile of osuFiles) {
+        try {
+          const fileName = join(cacheFolder, songFolder, osuFile);
+          const data = await readFile(fileName);
+          const md5Hash = createHash("md5").update(data).digest("hex");
+          const blueprint = parseBlueprint(data.toString("utf-8"), { sectionsToRead: METADATA_SECTIONS_TO_READ });
+          blueprints[md5Hash] = mapToLocalBlueprint(blueprint, osuFile, songFolder, md5Hash, "cache");
+        } catch (err) {
+          console.warn(`Could not read cached beatmap ${osuFile}`, err);
+        }
+      }
+    }
+    this.cacheNeedsFullRead = false;
+    return (this.cacheBlueprints = blueprints);
   }
 
   async blueprintHasBeenAdded() {
@@ -146,22 +207,28 @@ export class BlueprintLocatorService {
    * @returns the blueprints of all osu! installations, if a beatmap is imported in both, the osu!stable one is used
    */
   async getAllBlueprints(): Promise<Record<BlueprintMD5, BlueprintInfo>> {
-    const [stable, lazer] = await Promise.all(OSU_CLIENTS.map((client) => this.getBlueprintsOfClient(client)));
-    return { ...lazer, ...stable };
+    const [stable, lazer, cache] = await Promise.all([
+      this.getBlueprintsOfClient("stable"),
+      this.getBlueprintsOfClient("lazer"),
+      this.readCacheBlueprints(),
+    ]);
+    return { ...cache, ...lazer, ...stable };
   }
 
   /**
-   * Finds the blueprint in any of the osu! installations.
+   * Finds the blueprint in any of the osu! installations (or Rewind's fallback cache).
    * @param md5 the MD5 hash of the .osu file
    * @param preferredClient the client that is looked at first (e.g. the one the replay was played on)
    */
   async getBlueprintByMD5(md5: string, preferredClient: OsuClient = "stable"): Promise<BlueprintInfo | undefined> {
+    const normalizedMd5 = md5.toLowerCase();
     const clients = [preferredClient, ...OSU_CLIENTS.filter((c) => c !== preferredClient)];
     for (const client of clients) {
-      const blueprint = (await this.getBlueprintsOfClient(client))[md5];
+      const blueprint = (await this.getBlueprintsOfClient(client))[normalizedMd5];
       if (blueprint) return blueprint;
     }
-    return undefined;
+    const cached = (await this.readCacheBlueprints())[normalizedMd5];
+    return cached;
   }
 
   /**
@@ -175,6 +242,9 @@ export class BlueprintLocatorService {
       const lazerFolder = this.osuFolderService.getLazerFolder();
       const file = blueprint.lazerFiles && findLazerFile(blueprint.lazerFiles, fileName);
       return lazerFolder && file ? join(lazerFolder, lazerFilePath(file.hash)) : undefined;
+    }
+    if (blueprint.client === "cache") {
+      return this.cacheFolder ? join(this.cacheFolder, blueprint.folderName, fileName) : undefined;
     }
     return join(this.songsFolder, blueprint.folderName, fileName);
   }

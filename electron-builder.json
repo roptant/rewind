@@ -1,18 +1,33 @@
 {
   "appId": "sh.abstrakt.rewind",
   "productName": "Rewind",
+  "publish": {
+    "provider": "github",
+    "owner": "roptant",
+    "repo": "rewind"
+  },
+  "win": {
+    "target": [
+      "nsis"
+    ],
+    "artifactName": "${productName}-Setup-${version}.${ext}"
+  },
   "nsis": {
     "oneClick": false,
     "allowToChangeInstallationDirectory": true
+  },
+  "linux": {
+    "target": [
+      "AppImage",
+      "tar.gz"
+    ],
+    "category": "Game"
   },
   "generateUpdatesFilesForAllChannels": true,
   "directories": {
     "output": "dist/electron",
     "buildResources": "tools/electron-builder/build-resources",
     "app": "."
-  },
-  "snap": {
-    "publish":  ["github"]
   },
   "files": [
     {
@@ -30,7 +45,16 @@
       "from": "dist/apps/desktop/backend",
       "to": "backend"
     },
-    "package.json"
+    "package.json",
+    "!**/node_modules/realm/prebuilds/android{,/**}",
+    "!**/node_modules/realm/prebuilds/apple{,/**}",
+    "!**/node_modules/realm/binding{,/**}",
+    "!**/node_modules/realm/bindgen{,/**}"
+  ],
+  "npmRebuild": false,
+  "asarUnpack": [
+    "**/node_modules/realm/**/*",
+    "**/node_modules/@realm/**/*"
   ],
   "extraResources": [
     {

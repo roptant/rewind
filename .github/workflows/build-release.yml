@@ -1,8 +1,12 @@
 name: Build/release v2
 
 on:
-  push:
   workflow_dispatch:
+    inputs:
+      release:
+        description: 'Publish artifacts to GitHub Releases'
+        required: false
+        default: 'false'
 
 jobs:
   release:
@@ -10,25 +14,38 @@ jobs:
 
     strategy:
       matrix:
-        os: [ ubuntu-latest, windows-latest, macos-latest ]
+        os: [ ubuntu-latest, windows-latest ]
 
     steps:
-      - name: Checkout code
-        uses: nschloe/action-cached-lfs-checkout@v1
+      - name: Checkout code (with LFS)
+        uses: actions/checkout@v4
+        with:
+          lfs: true
 
-      - name: Install Node.js, NPM and Yarn
-        uses: actions/setup-node@v3
+      - name: Install Node.js and Yarn
+        uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm'
 
-      - name: Build/release Electron app
-        uses: Yan-Jobs/action-electron-builder@v1.7.0
-        with:
-          # GitHub token, automatically provided to the action
-          # (No need to define this secret in the repo settings)
-          github_token: ${{ secrets.github_token }}
+      - name: Install dependencies
+        run: yarn install --ignore-scripts
 
-          # If the commit is tagged with a version (e.g. "v1.0.0"),
-          # release the app after building
-          release: ${{ startsWith(github.ref, 'refs/tags/v') }}
+      - name: Unpack native Realm N-API prebuild & Electron binary
+        run: |
+          node node_modules/electron/install.js
+          npx --prefix node_modules/realm prebuild-install -r napi
+
+      - name: Build production bundles
+        run: npx nx run-many --skip-nx-cache --target=build --projects=desktop-frontend,desktop-main --prod
+
+      - name: Package & publish Electron app (Linux)
+        if: runner.os == 'Linux'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --linux AppImage tar.gz --publish ${{ inputs.release == 'true' && 'always' || 'never' }}
+
+      - name: Package & publish Electron app (Windows)
+        if: runner.os == 'Windows'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --win nsis --publish ${{ inputs.release == 'true' && 'always' || 'never' }}
